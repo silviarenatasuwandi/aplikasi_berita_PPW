@@ -1,0 +1,11 @@
+venv/
+.git/
+.gitignore
+__pycache__/
+*.pyc
+*.pyo
+naive_bayes_skipgram_lama.pkl
+scaler_skipgram_lama.pkl
+skipgram_model_lama.pkl
+.vscode/
+.idea/

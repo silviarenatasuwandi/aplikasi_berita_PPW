@@ -1,9 +1,11 @@
-import streamlit as st
-import pickle
+import os
 import re
+import pickle
 import requests
-
 from bs4 import BeautifulSoup
+from flask import Flask, render_template, request, jsonify
+
+# Preprocessing NLP Sastrawi
 from Sastrawi.StopWordRemover.StopWordRemoverFactory import (
     StopWordRemoverFactory
 )
@@ -11,795 +13,290 @@ from Sastrawi.Stemmer.StemmerFactory import (
     StemmerFactory
 )
 
+app = Flask(__name__)
 
 # ============================================================
-# KONFIGURASI STREAMLIT
+# BASE DIRECTORY FOR MODEL LOADING (Vercel & Local Friendly)
 # ============================================================
-
-st.set_page_config(
-    page_title="Klasifikasi Berita",
-    page_icon="📰",
-    layout="wide"
-)
-
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ============================================================
-# LOAD MODEL
+# LOAD MODELS & SCALER
 # ============================================================
+skipgram_model = None
+naive_bayes_model = None
+scaler = None
+model_load_error = None
 
-@st.cache_resource
-def load_models():
-
-    # Memuat model Skip-Gram
-    with open("skipgram_model.pkl", "rb") as file:
-        skipgram_model = pickle.load(file)
-
-    # Memuat model Naive Bayes
-    with open("naive_bayes_skipgram.pkl", "rb") as file:
-        naive_bayes_model = pickle.load(file)
-
-    # Memuat scaler
-    with open("scaler_skipgram.pkl", "rb") as file:
-        scaler = pickle.load(file)
-
-    return (
-        skipgram_model,
-        naive_bayes_model,
-        scaler
-    )
-
-
-# Mencoba memuat model
 try:
+    with open(os.path.join(BASE_DIR, "skipgram_model.pkl"), "rb") as f:
+        skipgram_model = pickle.load(f)
 
-    (
-        skipgram_model,
-        naive_bayes_model,
-        scaler
-    ) = load_models()
+    with open(os.path.join(BASE_DIR, "naive_bayes_skipgram.pkl"), "rb") as f:
+        naive_bayes_model = pickle.load(f)
 
+    with open(os.path.join(BASE_DIR, "scaler_skipgram.pkl"), "rb") as f:
+        scaler = pickle.load(f)
 except Exception as e:
-
-    st.error("❌ Model gagal dimuat.")
-
-    st.code(
-        str(e),
-        language="text"
-    )
-
-    st.warning(
-        "Pastikan file skipgram_model.pkl, "
-        "naive_bayes_skipgram.pkl, dan scaler_skipgram.pkl "
-        "sudah dibuat menggunakan environment Python yang sama."
-    )
-
-    st.stop()
-
+    model_load_error = str(e)
 
 # ============================================================
-# LOAD PREPROCESSING
+# INITIALIZE SASTRAWI PREPROCESSING
 # ============================================================
-
-# Stopword bahasa Indonesia
 stopword_factory = StopWordRemoverFactory()
-stopword_remover = (
-    stopword_factory.create_stop_word_remover()
-)
+stopword_remover = stopword_factory.create_stop_word_remover()
 
-# Stemmer bahasa Indonesia
 stemmer_factory = StemmerFactory()
 stemmer = stemmer_factory.create_stemmer()
 
-
 # ============================================================
-# FUNGSI PREPROCESSING
+# PREPROCESSING FUNCTION
 # ============================================================
-
 def preprocessing(text):
-
-    # Memastikan input berupa string
-    text = str(text)
-
-    # Case folding
-    text = text.lower()
-
-    # Menghapus tanda baca
-    text = re.sub(
-        r"[^\w\s]",
-        " ",
-        text
-    )
-
-    # Menghapus angka
-    text = re.sub(
-        r"\d+",
-        " ",
-        text
-    )
-
-    # Menghapus spasi berlebih
-    text = re.sub(
-        r"\s+",
-        " ",
-        text
-    ).strip()
-
-    # Stopword removal
+    """
+    Melakukan preprocessing teks berita:
+    1. Case folding (lowercase)
+    2. Menghapus karakter non-alphanumeric & tanda baca
+    3. Menghapus angka
+    4. Normalisasi spasi
+    5. Stopword removal (Sastrawi)
+    6. Stemming (Sastrawi)
+    7. Tokenisasi
+    """
+    text = str(text).lower()
+    text = re.sub(r"[^\w\s]", " ", text)
+    text = re.sub(r"\d+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    
+    # Sastrawi stopword removal & stemming
     text = stopword_remover.remove(text)
-
-    # Stemming
     text = stemmer.stem(text)
-
-    # Tokenisasi
+    
     tokens = text.split()
-
     return tokens
 
-
 # ============================================================
-# FUNGSI MENGAMBIL ISI BERITA DARI URL
+# WEBSCRAPING FUNCTION FOR ANY NEWS URL
 # ============================================================
-
 def get_news_content(url):
-
-    # User-Agent agar request menyerupai browser
+    """
+    Mengambil judul dan isi artikel dari link URL berita apapun.
+    """
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/154.0.0.0 Safari/537.36"
+            "Chrome/120.0.0.0 Safari/537.36"
         )
     }
 
-    # Mengambil halaman website
-    response = requests.get(
-        url,
-        headers=headers,
-        timeout=20
-    )
-
-    # Memastikan request berhasil
+    response = requests.get(url, headers=headers, timeout=15)
     response.raise_for_status()
 
-    # Membaca HTML
-    soup = BeautifulSoup(
-        response.text,
-        "html.parser"
-    )
+    soup = BeautifulSoup(response.text, "html.parser")
 
-    # Menghapus elemen HTML yang bukan isi utama
-    for tag in soup([
-        "script",
-        "style",
-        "nav",
-        "footer",
-        "header",
-        "aside",
-        "form",
-        "noscript"
-    ]):
+    # Extract article title
+    title = ""
+    if soup.find("h1"):
+        title = soup.find("h1").get_text(strip=True)
+    elif soup.find("title"):
+        title = soup.find("title").get_text(strip=True)
 
+    # Clean non-content tags
+    for tag in soup(["script", "style", "nav", "footer", "header", "aside", "form", "noscript"]):
         tag.decompose()
 
-    # Mengambil seluruh paragraf
+    # Extract paragraph texts
     paragraphs = soup.find_all("p")
-
     contents = []
 
-    for paragraph in paragraphs:
+    for p in paragraphs:
+        txt = p.get_text(" ", strip=True)
+        if txt and len(txt) > 20:  # exclude tiny metadata lines
+            contents.append(txt)
 
-        text = paragraph.get_text(
-            " ",
-            strip=True
-        )
-
-        if text:
-
-            contents.append(text)
-
-    # Menggabungkan seluruh paragraf
     article_text = " ".join(contents)
+    article_text = re.sub(r"\s+", " ", article_text).strip()
 
-    # Membersihkan spasi
-    article_text = re.sub(
-        r"\s+",
-        " ",
-        article_text
-    ).strip()
-
-    return article_text
-
+    return title, article_text
 
 # ============================================================
-# FUNGSI DOCUMENT VECTOR
+# DOCUMENT VECTOR GENERATION (SKIP-GRAM AVERAGE)
 # ============================================================
-
 def document_vector(model, tokens):
-
     vectors = []
-
-    # Mengambil vector dari setiap kata
-    # yang terdapat pada vocabulary Skip-Gram
     for word in tokens:
-
         if word in model.wv:
-
-            vectors.append(
-                model.wv[word]
-            )
-
-    # Jika tidak ada kata yang dikenali
+            vectors.append(model.wv[word])
+            
     if len(vectors) == 0:
-
         return [0.0] * model.vector_size
 
-    # Menghasilkan document vector
-    # dengan menghitung rata-rata word vector
-    return sum(vectors) / len(vectors)
-
+    return (sum(vectors) / len(vectors)).tolist()
 
 # ============================================================
-# CEK KATEGORI BERDASARKAN URL
+# URL CATEGORY CHECK (HEURISTICS)
 # ============================================================
-
 def cek_kategori_url(url):
-
-    # Mengubah URL menjadi lowercase
     url_lower = url.lower()
 
-    # Keyword Finance
-    finance_keywords = [
-        "finance",
-        "finansial",
-        "bisnis",
-        "business",
-        "market",
-        "ekonomi"
-    ]
-
-    # Keyword Sport
-    sport_keywords = [
-        "sport",
-        "sports",
-        "olahraga",
-        "sepakbola",
-        "bola",
-        "football",
-        "soccer"
-    ]
-
-    # Keyword kategori lain
+    finance_keywords = ["finance", "finansial", "bisnis", "business", "market", "ekonomi", "investasi", "bursa"]
+    sport_keywords = ["sport", "sports", "olahraga", "sepakbola", "bola", "football", "soccer", "motogp", "badminton"]
     other_keywords = [
-        "health",
-        "kesehatan",
-        "fotohealth",
-        "lifestyle",
-        "gaya-hidup",
-        "travel",
-        "wisata",
-        "food",
-        "kuliner",
-        "entertainment",
-        "hiburan",
-        "technology",
-        "teknologi",
-        "tekno",
-        "otomotif",
-        "detikhot",
-        "wolipop",
-        "inet"
+        "health", "kesehatan", "fotohealth", "lifestyle", "gaya-hidup",
+        "travel", "wisata", "food", "kuliner", "entertainment", "hiburan",
+        "technology", "teknologi", "tekno", "otomotif", "detikhot", "wolipop", "inet"
     ]
 
-    # Cek Finance
-    for keyword in finance_keywords:
-
-        if keyword in url_lower:
-
+    for kw in finance_keywords:
+        if kw in url_lower:
             return True, "finance"
 
-    # Cek Sport
-    for keyword in sport_keywords:
-
-        if keyword in url_lower:
-
+    for kw in sport_keywords:
+        if kw in url_lower:
             return True, "sport"
 
-    # Cek kategori lain
-    for keyword in other_keywords:
-
-        if keyword in url_lower:
-
+    for kw in other_keywords:
+        if kw in url_lower:
             return False, "other"
 
-    # Jika tidak ditemukan
     return True, "unknown"
 
-
 # ============================================================
-# NORMALISASI LABEL
+# LABEL NORMALIZATION (Sport, Finance, Other)
 # ============================================================
-
 def normalisasi_label(label):
-
-    label = str(label).lower().strip()
-
-    # Finance
-    if label in [
-        "finance",
-        "finansial",
-        "bisnis",
-        "business",
-        "ekonomi"
-    ]:
-
+    lbl = str(label).lower().strip()
+    if lbl in ["finance", "finansial", "bisnis", "business", "ekonomi"]:
         return "finance"
-
-    # Sport
-    if label in [
-        "sport",
-        "sports",
-        "olahraga"
-    ]:
-
+    elif lbl in ["sport", "sports", "olahraga", "suport"]:
         return "sport"
-
-    # Selain itu
     return "other"
 
+# ============================================================
+# ROUTE: WEB UI
+# ============================================================
+@app.route("/", methods=["GET"])
+def index():
+    return render_template("index.html")
 
 # ============================================================
-# TAMPILAN UTAMA
+# ROUTE: API CLASSIFICATION ENDPOINT
 # ============================================================
-
-st.title(
-    "📰 Klasifikasi Berita Menggunakan Skip-Gram + Naive Bayes"
-)
-
-st.write(
-    """
-    Aplikasi ini menggunakan **Skip-Gram** untuk menghasilkan
-    representasi numerik dari teks berita dan **Naive Bayes**
-    untuk melakukan klasifikasi berita.
-    """
-)
-
-st.info(
-    """
-    **Kategori model:** Finance dan Sport.
-
-    Berita yang berada di luar kategori tersebut dapat ditampilkan
-    sebagai **Other** berdasarkan aturan aplikasi.
-    """
-)
-
-
-# ============================================================
-# INPUT URL
-# ============================================================
-
-st.subheader(
-    "🔗 Masukkan URL Berita"
-)
-
-url = st.text_input(
-    "URL berita:",
-    placeholder="https://news.detik.com/..."
-)
-
-
-# ============================================================
-# PROSES KLASIFIKASI
-# ============================================================
-
-if st.button(
-    "🔍 Klasifikasikan Berita",
-    use_container_width=True
-):
-
-    # --------------------------------------------------------
-    # VALIDASI URL
-    # --------------------------------------------------------
-
-    if not url.strip():
-
-        st.warning(
-            "⚠️ Silakan masukkan URL berita terlebih dahulu."
-        )
-
-        st.stop()
-
-    if not (
-        url.startswith("http://")
-        or url.startswith("https://")
-    ):
-
-        st.error(
-            "❌ URL harus diawali dengan http:// atau https://"
-        )
-
-        st.stop()
-
-
-    # --------------------------------------------------------
-    # CEK KATEGORI URL
-    # --------------------------------------------------------
-
-    url_valid, url_category = cek_kategori_url(url)
-
-
-    # --------------------------------------------------------
-    # MENGAMBIL ISI BERITA
-    # --------------------------------------------------------
-
-    with st.spinner(
-        "⏳ Mengambil isi berita..."
-    ):
-
-        try:
-
-            article_text = get_news_content(url)
-
-        except requests.exceptions.Timeout:
-
-            st.error(
-                "❌ Waktu pengambilan berita habis (timeout)."
-            )
-
-            st.stop()
-
-        except requests.exceptions.RequestException as e:
-
-            st.error(
-                "❌ Gagal mengambil berita dari URL."
-            )
-
-            st.code(
-                str(e),
-                language="text"
-            )
-
-            st.stop()
-
-        except Exception as e:
-
-            st.error(
-                "❌ Terjadi kesalahan saat mengambil berita."
-            )
-
-            st.code(
-                str(e),
-                language="text"
-            )
-
-            st.stop()
-
-
-    # --------------------------------------------------------
-    # VALIDASI ISI BERITA
-    # --------------------------------------------------------
-
-    if not article_text:
-
-        st.error(
-            "❌ Isi berita tidak berhasil ditemukan."
-        )
-
-        st.info(
-            """
-            Website mungkin menggunakan struktur HTML yang berbeda,
-            membutuhkan JavaScript, atau membatasi akses scraping.
-            """
-        )
-
-        st.stop()
-
-
-    # --------------------------------------------------------
-    # TAMPILKAN ISI BERITA
-    # --------------------------------------------------------
-
-    st.success(
-        "✅ Isi berita berhasil diambil."
-    )
-
-    with st.expander(
-        "📄 Lihat Isi Berita"
-    ):
-
-        st.write(article_text)
-
-
-    # ========================================================
-    # PREPROCESSING
-    # ========================================================
-
-    with st.spinner(
-        "⏳ Melakukan preprocessing..."
-    ):
-
-        tokens = preprocessing(
-            article_text
-        )
-
-
-    # Memastikan token tidak kosong
-    if len(tokens) == 0:
-
-        st.error(
-            "❌ Tidak ada token yang dapat digunakan "
-            "setelah preprocessing."
-        )
-
-        st.stop()
-
-
-    # ========================================================
-    # HASIL PREPROCESSING
-    # ========================================================
-
-    with st.expander(
-        "🔤 Lihat Hasil Preprocessing"
-    ):
-
-        st.write(
-            "Jumlah token:",
-            len(tokens)
-        )
-
-        st.write(
-            "Token:"
-        )
-
-        st.write(
-            tokens
-        )
-
-
-    # ========================================================
-    # SKIP-GRAM DOCUMENT VECTOR
-    # ========================================================
-
-    with st.spinner(
-        "⏳ Membuat representasi Skip-Gram..."
-    ):
-
-        vector = document_vector(
-            skipgram_model,
-            tokens
-        )
-
-
-    # Mengubah vector menjadi bentuk 2 dimensi
-    vector = [vector]
-
-
-    # ========================================================
-    # SCALING
-    # ========================================================
+@app.route("/api/classify", methods=["POST"])
+def classify():
+    if model_load_error:
+        return jsonify({
+            "status": "error",
+            "message": f"Model gagal dimuat: {model_load_error}"
+        }), 500
+
+    # Get URL from JSON or Form Data
+    data = request.get_json(silent=True) or request.form
+    url = data.get("url", "").strip()
+
+    if not url:
+        return jsonify({
+            "status": "error",
+            "message": "Silakan masukkan URL berita terlebih dahulu."
+        }), 400
+
+    if not (url.startswith("http://") or url.startswith("https://")):
+        return jsonify({
+            "status": "error",
+            "message": "URL harus diawali dengan http:// atau https://"
+        }), 400
 
     try:
+        # 1. Cek URL heuristic category
+        _, url_category = cek_kategori_url(url)
 
-        vector_scaled = scaler.transform(
-            vector
-        )
+        # 2. Extract news text from URL
+        title, article_text = get_news_content(url)
 
-    except Exception as e:
+        if not article_text:
+            return jsonify({
+                "status": "error",
+                "message": "Gagal mengambil isi berita dari URL. Pastikan link dapat diakses publik."
+            }), 400
 
-        st.error(
-            "❌ Terjadi masalah saat melakukan scaling."
-        )
+        # 3. Preprocessing text
+        tokens = preprocessing(article_text)
 
-        st.code(
-            str(e),
-            language="text"
-        )
+        if not tokens:
+            return jsonify({
+                "status": "error",
+                "message": "Tidak ada kata yang valid untuk diproses setelah preprocessing."
+            }), 400
 
-        st.stop()
+        # 4. Skip-Gram Vector Representation
+        vec = document_vector(skipgram_model, tokens)
 
+        # 5. Scaling with MinMaxScaler
+        vec_scaled = scaler.transform([vec])
 
-    # ========================================================
-    # NAIVE BAYES PREDICTION
-    # ========================================================
-
-    try:
-
-        # Prediksi dari Naive Bayes
-        prediction = naive_bayes_model.predict(
-            vector_scaled
-        )[0]
-
-        # Probabilitas setiap kelas
-        probabilities = naive_bayes_model.predict_proba(
-            vector_scaled
-        )[0]
-
-        # Nama kelas
+        # 6. Predict using Naive Bayes Model
+        probabilities = naive_bayes_model.predict_proba(vec_scaled)[0]
         classes = naive_bayes_model.classes_
 
-    except Exception as e:
+        max_idx = probabilities.argmax()
+        max_prob = float(probabilities[max_idx])
+        raw_pred_label = classes[max_idx]
+        predicted_label = normalisasi_label(raw_pred_label)
 
-        st.error(
-            "❌ Terjadi masalah saat melakukan klasifikasi."
-        )
+        # Build probabilities dictionary with normalized labels
+        prob_dict = {}
+        for cls_name, prob in zip(classes, probabilities):
+            norm_cls = normalisasi_label(cls_name)
+            prob_dict[norm_cls] = round(float(prob) * 100, 2)
 
-        st.code(
-            str(e),
-            language="text"
-        )
-
-        st.stop()
-
-
-    # ========================================================
-    # MENGAMBIL PROBABILITAS TERTINGGI
-    # ========================================================
-
-    # Posisi probabilitas terbesar
-    max_probability_index = probabilities.argmax()
-
-    # Nilai probabilitas terbesar
-    max_probability = probabilities[
-        max_probability_index
-    ]
-
-    # Label dengan probabilitas terbesar
-    predicted_label = classes[
-        max_probability_index
-    ]
-
-    # Normalisasi label
-    predicted_label = normalisasi_label(
-        predicted_label
-    )
-
-
-    # ========================================================
-    # THRESHOLD CONFIDENCE
-    # ========================================================
-
-    # Threshold confidence
-    threshold = 0.60
-
-    # Secara default menggunakan hasil model
-    final_prediction = predicted_label
-
-    # Jika URL masuk kategori lain
-    if url_category == "other":
-
-        final_prediction = "other"
-
-    # Jika confidence di bawah 60%
-    elif max_probability < threshold:
-
-        final_prediction = "other"
-
-
-    # ========================================================
-    # HASIL KLASIFIKASI
-    # ========================================================
-
-    st.subheader(
-        "📊 Hasil Klasifikasi"
-    )
-
-
-    # --------------------------------------------------------
-    # HASIL OTHER
-    # --------------------------------------------------------
-
-    if final_prediction == "other":
-
-        st.warning(
-            "📌 Kategori Berita: OTHER"
-        )
+        # 7. Apply Thresholding Logic & URL Overrides
+        threshold = 0.60
+        final_prediction = predicted_label
+        explanation = ""
 
         if url_category == "other":
-
-            st.info(
-                """
-                URL berita terindikasi berasal dari kategori
-                di luar Finance dan Sport.
-                """
-            )
-
-        elif max_probability < threshold:
-
-            st.info(
-                f"""
-                Confidence model sebesar
-                **{max_probability * 100:.2f}%**,
-                sehingga hasil dikategorikan sebagai Other
-                karena berada di bawah threshold
-                **{threshold * 100:.0f}%**.
-                """
-            )
-
+            final_prediction = "other"
+            explanation = "URL terindikasi dari kategori di luar Finance & Sport."
+        elif max_prob < threshold:
+            final_prediction = "other"
+            explanation = f"Confidence model ({max_prob * 100:.1f}%) di bawah threshold {threshold * 100:.0f}%."
         else:
+            explanation = f"Diklasifikasikan sebagai {final_prediction.upper()} dengan tingkat keyakinan {max_prob * 100:.1f}%."
 
-            st.info(
-                """
-                Model menghasilkan kategori yang tidak termasuk
-                kelas Finance atau Sport.
-                """
-            )
+        return jsonify({
+            "status": "success",
+            "data": {
+                "url": url,
+                "title": title or "Berita Tanpa Judul",
+                "label": final_prediction,  # 'sport', 'finance', or 'other'
+                "confidence": round(max_prob * 100, 2),
+                "explanation": explanation,
+                "probabilities": prob_dict,
+                "token_count": len(tokens),
+                "tokens": tokens[:50],  # sample first 50 tokens
+                "article_preview": article_text[:500] + ("..." if len(article_text) > 500 else ""),
+                "full_article": article_text
+            }
+        })
 
+    except requests.exceptions.Timeout:
+        return jsonify({
+            "status": "error",
+            "message": "Waktu pengambilan berita habis (Timeout). Situs web tidak merespons."
+        }), 504
+    except requests.exceptions.RequestException as e:
+        return jsonify({
+            "status": "error",
+            "message": f"Gagal mengambil berita dari URL: {str(e)}"
+        }), 500
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": f"Terjadi kesalahan internal: {str(e)}"
+        }), 500
 
-    # --------------------------------------------------------
-    # HASIL FINANCE / SPORT
-    # --------------------------------------------------------
-
-    else:
-
-        if final_prediction == "finance":
-
-            st.success(
-                "💰 Kategori Berita: FINANCE"
-            )
-
-        elif final_prediction == "sport":
-
-            st.success(
-                "⚽ Kategori Berita: SPORT"
-            )
-
-        else:
-
-            st.info(
-                f"Kategori Berita: {final_prediction.upper()}"
-            )
-
-
-        # ----------------------------------------------------
-        # CONFIDENCE
-        # ----------------------------------------------------
-
-        st.metric(
-            "Confidence Model",
-            f"{max_probability * 100:.2f}%"
-        )
-
-
-        # ----------------------------------------------------
-        # PROBABILITAS SETIAP KELAS
-        # ----------------------------------------------------
-
-        st.subheader(
-            "📈 Probabilitas Setiap Kelas"
-        )
-
-        probability_data = {}
-
-        # Menggabungkan kelas dengan probabilitas
-        for class_name, probability in zip(
-            classes,
-            probabilities
-        ):
-
-            normalized_class = normalisasi_label(
-                class_name
-            )
-
-            probability_data[
-                normalized_class
-            ] = probability
-
-
-        # Menampilkan probabilitas
-        for class_name, probability in (
-            probability_data.items()
-        ):
-
-            st.write(
-                f"**{class_name.upper()}**: "
-                f"{probability * 100:.2f}%"
-            )
-
-            # Progress bar
-            st.progress(
-                float(probability)
-            )
-
-
-# ============================================================
-# SELESAI
-# ============================================================
+if __name__ == "__main__":
+    # Local development server (without needing .env)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=True)

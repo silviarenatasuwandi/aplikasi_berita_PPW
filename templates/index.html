@@ -5,362 +5,188 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Klasifikasi Berita Flask - Skip-Gram + Naive Bayes</title>
     <meta name="description" content="Aplikasi Web Flask untuk klasifikasi berita otomatis (Sport, Finance, Other) menggunakan Skip-Gram Word2Vec dan Naive Bayes. Deployable to Vercel.">
-
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
-
     <!-- Font Awesome Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-
     <!-- Custom Stylesheet -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
-
 <body>
-
     <div class="bg-glow bg-glow-1"></div>
     <div class="bg-glow bg-glow-2"></div>
 
     <div class="app-container">
-
         <!-- Header Section -->
         <header class="header">
-
             <div class="brand-badge">
                 <i class="fa-solid fa-bolt"></i> Flask &bull; Vercel Ready
             </div>
-
             <h1 class="main-title">
                 📰 Klasifikasi Berita Otomatis
             </h1>
-
             <p class="subtitle">
-                Ekstraksi & klasifikasi URL berita bahasa Indonesia menggunakan
-                <strong>Skip-Gram (Word2Vec)</strong> +
-                <strong>Naive Bayes</strong>
+                Ekstraksi & klasifikasi URL berita bahasa Indonesia menggunakan <strong>Skip-Gram (Word2Vec)</strong> + <strong>Naive Bayes</strong>
             </p>
-
             <div class="focus-labels">
-
-                <span class="label-chip sport">
-                    <i class="fa-solid fa-football"></i> SPORT
-                </span>
-
-                <span class="label-chip finance">
-                    <i class="fa-solid fa-coins"></i> FINANCE
-                </span>
-
-                <span class="label-chip other">
-                    <i class="fa-solid fa-layer-group"></i> OTHER
-                </span>
-
+                <span class="label-chip sport"><i class="fa-solid fa-football"></i> SPORT</span>
+                <span class="label-chip finance"><i class="fa-solid fa-coins"></i> FINANCE</span>
+                <span class="label-chip other"><i class="fa-solid fa-layer-group"></i> OTHER</span>
             </div>
-
         </header>
-
 
         <!-- Main Input Card -->
         <main class="main-content">
-
             <div class="glass-card input-card">
-
                 <form id="classify-form">
-
                     <label for="url-input" class="input-label">
-                        <i class="fa-solid fa-link"></i>
-                        Masukkan Link URL Berita:
+                        <i class="fa-solid fa-link"></i> Masukkan Link URL Berita:
                     </label>
-
                     <div class="input-wrapper">
-
-                        <input
-                            type="url"
-                            id="url-input"
-                            name="url"
-                            placeholder="https://news.detik.com/..."
-                            required
+                        <input 
+                            type="url" 
+                            id="url-input" 
+                            name="url" 
+                            placeholder="https://news.detik.com/..." 
+                            required 
                             autocomplete="off"
                         >
-
-                        <button
-                            type="submit"
-                            id="btn-submit"
-                            class="btn-primary"
-                        >
-
-                            <span class="btn-text">
-                                <i class="fa-solid fa-magnifying-glass"></i>
-                                Klasifikasikan
-                            </span>
-
-                            <span class="btn-spinner hidden">
-                                <i class="fa-solid fa-circle-notch fa-spin"></i>
-                            </span>
-
+                        <button type="submit" id="btn-submit" class="btn-primary">
+                            <span class="btn-text"><i class="fa-solid fa-magnifying-glass"></i> Klasifikasikan</span>
+                            <span class="btn-spinner hidden"><i class="fa-solid fa-circle-notch fa-spin"></i></span>
                         </button>
-
                     </div>
-
                 </form>
-
 
                 <!-- Sample Preset URLs -->
                 <div class="preset-section">
-
-                    <span class="preset-title">
-                        <i class="fa-solid fa-vial"></i>
-                        Coba Contoh URL:
-                    </span>
-
+                    <span class="preset-title"><i class="fa-solid fa-vial"></i> Coba Contoh URL:</span>
                     <div class="preset-chips">
-
-                        <button
-                            class="preset-btn"
-                            data-url="https://sport.detik.com/sepakbola/liga-inggris/d-7570000/klasemen-liga-inggris"
-                        >
+                        <button class="preset-btn" data-url="https://sport.detik.com/sepakbola/liga-inggris/d-7570000/klasemen-liga-inggris">
                             ⚽ Contoh Sport
                         </button>
-
-                        <button
-                            class="preset-btn"
-                            data-url="https://finance.detik.com/bursa-dan-valas/d-7570000/ihsg-hari-ini"
-                        >
+                        <button class="preset-btn" data-url="https://finance.detik.com/bursa-dan-valas/d-7570000/ihsg-hari-ini">
                             💰 Contoh Finance
                         </button>
-
-                        <button
-                            class="preset-btn"
-                            data-url="https://health.detik.com/berita-detikhealth/d-7570000/tips-hidup-sehat"
-                        >
+                        <button class="preset-btn" data-url="https://health.detik.com/berita-detikhealth/d-7570000/tips-hidup-sehat">
                             🧬 Contoh Other
                         </button>
-
                     </div>
-
                 </div>
-
             </div>
-
 
             <!-- Loading Spinner & Progress -->
             <div id="loading-card" class="glass-card loading-card hidden">
-
                 <div class="loader-spinner"></div>
-
-                <h3 class="loading-title">
-                    Sedang Memproses Berita...
-                </h3>
-
+                <h3 class="loading-title">Sedang Memproses Berita...</h3>
                 <div class="loading-steps">
-
-                    <div class="step active" id="step-1">
-                        <i class="fa-solid fa-cloud-arrow-down"></i>
-                        Scrape URL Berita
-                    </div>
-
-                    <div class="step" id="step-2">
-                        <i class="fa-solid fa-filter"></i>
-                        Preprocessing NLP Sastrawi
-                    </div>
-
-                    <div class="step" id="step-3">
-                        <i class="fa-solid fa-network-wired"></i>
-                        Vector Skip-Gram
-                    </div>
-
-                    <div class="step" id="step-4">
-                        <i class="fa-solid fa-brain"></i>
-                        Prediksi Naive Bayes
-                    </div>
-
+                    <div class="step active" id="step-1"><i class="fa-solid fa-cloud-arrow-down"></i> Scrape URL Berita</div>
+                    <div class="step" id="step-2"><i class="fa-solid fa-filter"></i> Preprocessing NLP Sastrawi</div>
+                    <div class="step" id="step-3"><i class="fa-solid fa-network-wired"></i> Vector Skip-Gram</div>
+                    <div class="step" id="step-4"><i class="fa-solid fa-brain"></i> Prediksi Naive Bayes</div>
                 </div>
-
             </div>
-
 
             <!-- Error Banner -->
             <div id="error-card" class="glass-card error-card hidden">
-
-                <div class="error-icon">
-                    <i class="fa-solid fa-triangle-exclamation"></i>
-                </div>
-
+                <div class="error-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
                 <div class="error-body">
-
-                    <h4 class="error-title">
-                        Kesalahan
-                    </h4>
-
-                    <p id="error-message">
-                        Gagal memproses URL berita.
-                    </p>
-
+                    <h4 class="error-title">Kesalahan</h4>
+                    <p id="error-message">Gagal memproses URL berita.</p>
                 </div>
-
             </div>
-
 
             <!-- Classification Result Card -->
             <div id="result-card" class="glass-card result-card hidden">
-
                 <div class="result-header">
-
                     <div class="result-badge-wrapper">
-
-                        <span class="result-label-text">
-                            Hasil Klasifikasi:
-                        </span>
-
-                        <div
-                            id="result-badge"
-                            class="result-badge badge-sport"
-                        >
-
-                            <i
-                                id="badge-icon"
-                                class="fa-solid fa-trophy"
-                            ></i>
-
-                            <span id="badge-text">
-                                SPORT
-                            </span>
-
+                        <span class="result-label-text">Hasil Klasifikasi:</span>
+                        <div id="result-badge" class="result-badge badge-sport">
+                            <i id="badge-icon" class="fa-solid fa-trophy"></i>
+                            <span id="badge-text">SPORT</span>
                         </div>
-
                     </div>
-
-
-                    <!-- Confidence tetap dipertahankan -->
                     <div class="confidence-box">
-
-                        <span
-                            class="confidence-value"
-                            id="confidence-value"
-                        >
-                            0%
-                        </span>
-
-                        <span class="confidence-label">
-                            Tingkat Keyakinan (Confidence)
-                        </span>
-
+                        <span class="confidence-value" id="confidence-value">0%</span>
+                        <span class="confidence-label">Tingkat Keyakinan (Confidence)</span>
                     </div>
-
                 </div>
 
-
-                <!-- Explanation -->
-                <p
-                    id="explanation-text"
-                    class="explanation-text"
-                >
-                    Berita berhasil diklasifikasikan dengan model
-                    Skip-Gram + Naive Bayes.
+                <p id="explanation-text" class="explanation-text">
+                    Berita berhasil diklasifikasikan dengan model Skip-Gram + Naive Bayes.
                 </p>
-
 
                 <!-- Article Summary Box -->
                 <div class="article-meta-box">
-
-                    <h3
-                        id="article-title"
-                        class="article-title"
-                    >
-                        <i class="fa-solid fa-newspaper"></i>
-                        Judul Berita
-                    </h3>
-
-                    <p class="article-url-source">
-
-                        <i class="fa-solid fa-globe"></i>
-                        Sumber:
-
-                        <a
-                            id="article-url-link"
-                            href="#"
-                            target="_blank"
-                            rel="noopener"
-                        >
-                            https://...
-                        </a>
-
-                    </p>
-
+                    <h3 id="article-title" class="article-title"><i class="fa-solid fa-newspaper"></i> Judul Berita</h3>
+                    <p class="article-url-source"><i class="fa-solid fa-globe"></i> Sumber: <a id="article-url-link" href="#" target="_blank" rel="noopener">https://...</a></p>
                 </div>
 
+                <!-- Probability Bar Section -->
+                <div class="probabilities-section">
+                    <h3><i class="fa-solid fa-chart-column"></i> Probabilitas Setiap Kategori</h3>
+                    <div class="prob-list">
+                        <div class="prob-item">
+                            <div class="prob-info">
+                                <span class="prob-name"><i class="fa-solid fa-football"></i> SPORT</span>
+                                <span class="prob-percent" id="prob-sport-val">0%</span>
+                            </div>
+                            <div class="prob-track">
+                                <div class="prob-bar bar-sport" id="bar-sport" style="width: 0%"></div>
+                            </div>
+                        </div>
+
+                        <div class="prob-item">
+                            <div class="prob-info">
+                                <span class="prob-name"><i class="fa-solid fa-coins"></i> FINANCE</span>
+                                <span class="prob-percent" id="prob-finance-val">0%</span>
+                            </div>
+                            <div class="prob-track">
+                                <div class="prob-bar bar-finance" id="bar-finance" style="width: 0%"></div>
+                            </div>
+                        </div>
+
+                        <div class="prob-item">
+                            <div class="prob-info">
+                                <span class="prob-name"><i class="fa-solid fa-layer-group"></i> OTHER</span>
+                                <span class="prob-percent" id="prob-other-val">0%</span>
+                            </div>
+                            <div class="prob-track">
+                                <div class="prob-bar bar-other" id="bar-other" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
 
                 <!-- Collapsible Details -->
                 <div class="accordion-section">
-
-                    <!-- Full Article -->
                     <details class="accordion-item">
-
-                        <summary>
-                            <i class="fa-solid fa-file-lines"></i>
-                            lihat Isi Berita Lengkap
-                        </summary>
-
+                        <summary><i class="fa-solid fa-file-lines"></i> lihat Isi Berita Lengkap</summary>
                         <div class="accordion-content">
-
-                            <p
-                                id="full-article-text"
-                                class="full-article-text"
-                            ></p>
-
+                            <p id="full-article-text" class="full-article-text"></p>
                         </div>
-
                     </details>
 
-
-                    <!-- Preprocessing Tokens -->
                     <details class="accordion-item">
-
-                        <summary>
-                            <i class="fa-solid fa-code"></i>
-                            lihat Hasil Token Preprocessing (Sastrawi)
-                        </summary>
-
+                        <summary><i class="fa-solid fa-code"></i> lihat Hasil Token Preprocessing (Sastrawi)</summary>
                         <div class="accordion-content">
-
-                            <p class="token-count-info">
-                                Jumlah Token:
-                                <strong id="token-count">0</strong>
-                            </p>
-
-                            <div
-                                id="tokens-cloud"
-                                class="tokens-cloud"
-                            ></div>
-
+                            <p class="token-count-info">Jumlah Token: <strong id="token-count">0</strong></p>
+                            <div id="tokens-cloud" class="tokens-cloud"></div>
                         </div>
-
                     </details>
-
                 </div>
-
             </div>
-
         </main>
-
 
         <!-- Footer -->
         <footer class="footer">
-
-            <p>
-                &copy; 2026 Aplikasi Klasifikasi Berita
-                &bull; Skip-Gram Word2Vec + Naive Bayes
-                &bull; Vercel Serverless Ready
-            </p>
-
+            <p>&copy; 2026 Aplikasi Klasifikasi Berita &bull; Skip-Gram Word2Vec & Naive Bayes &bull; Vercel Serverless Ready</p>
         </footer>
-
     </div>
-
 
     <!-- Script -->
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
-
 </body>
 </html>

@@ -1,6 +1,7 @@
 flask>=3.0.0
 gunicorn>=22.0.0
 numpy>=1.26.0
+pandas>=2.1.4
 scikit-learn>=1.4.0
 gensim>=4.3.0
 Sastrawi>=1.0.1
